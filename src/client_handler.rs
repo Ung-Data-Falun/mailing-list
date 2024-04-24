@@ -208,7 +208,7 @@ async fn handle_recieving(
     loop {
         message += &current_line;
         current_line = rx(stream).await? + "\n";
-        if current_line == "." {
+        if current_line == ".\n" {
             break;
         }
     }
