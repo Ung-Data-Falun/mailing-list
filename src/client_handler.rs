@@ -207,8 +207,7 @@ async fn handle_recieving(
     let mut current_line = String::new();
     loop {
         message += &current_line;
-        message += "\n";
-        current_line = rx(stream).await?;
+        current_line = rx(stream).await? + "\n";
         if current_line == "." {
             break;
         }
