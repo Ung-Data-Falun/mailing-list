@@ -1,12 +1,16 @@
 use color_eyre::eyre::Result;
 use std::net::SocketAddr;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
-    net::TcpStream,
-};
+use tokio::{io::BufStream, net::TcpStream};
 use tracing::{debug, info};
+use trust_dns_resolver::TokioAsyncResolver;
 
-use crate::config::ServerConfig;
+use crate::{
+    config::ServerConfig,
+    error::Error,
+    io::{rx, tx},
+    members::Members,
+    send_mail::send_group,
+};
 
 type FQDN = String;
 type Sender = String;
@@ -33,23 +37,12 @@ enum State {
     Recieving(FQDN, Sender, Vec<Reciever>),
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Error {
-    InvalidCommand,
-    Quit,
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!("{:?}", self))
-    }
-}
-impl std::error::Error for Error {}
-
 pub async fn handle_client(
     addr: SocketAddr,
     mut stream: BufStream<TcpStream>,
     config: &ServerConfig,
+    members: &Members,
+    resolver: &TokioAsyncResolver,
 ) -> Result<()> {
     info!("Handling connection from: {addr}");
     let stream = &mut stream;
@@ -68,7 +61,17 @@ pub async fn handle_client(
             I(fqdn) => handle_idle(stream, fqdn).await?,
             F(fqdn, sender, recievers) => handle_from(stream, fqdn, sender, recievers).await?,
             R(fqdn, sender, recievers) => {
-                handle_recieving(stream, fqdn, sender, recievers, &mut messages).await?
+                handle_recieving(
+                    stream,
+                    fqdn,
+                    sender,
+                    recievers,
+                    &mut messages,
+                    members,
+                    &config.hostname,
+                    resolver,
+                )
+                .await?
             }
         }
     }
@@ -116,7 +119,11 @@ async fn handle_idle(stream: &mut BufStream<TcpStream>, fqdn: FQDN) -> Result<St
     match &command as &str {
         "MAIL" => {}
         "QUIT" => {
-            tx(stream, format!("221 Bye bye {fqdn}. Nice to talk to you :3")).await?;
+            tx(
+                stream,
+                format!("221 Bye bye {fqdn}. Nice to talk to you :3"),
+            )
+            .await?;
             return Err(Error::Quit.into());
         }
         _ => return Err(Error::InvalidCommand.into()),
@@ -189,6 +196,9 @@ async fn handle_recieving(
     sender: Sender,
     recievers: Vec<Reciever>,
     messages: &mut Vec<Mail>,
+    members: &Members,
+    host: &str,
+    resolver: &TokioAsyncResolver,
 ) -> Result<State> {
     let mut message = String::new();
     let mut current_line = String::new();
@@ -204,30 +214,16 @@ async fn handle_recieving(
     debug!("{message}");
     messages.push(Mail {
         from: sender,
-        to: recievers,
-        payload: message,
+        to: recievers.clone(),
+        payload: message.clone(),
     });
-    tx(stream, format!("250 Thank you for the message! I will make sure that it comes through")).await?;
+    send_group(resolver, host, message, members, recievers[0].clone()).await;
+    tx(
+        stream,
+        format!("250 Thank you for the message! I will make sure that it comes through"),
+    )
+    .await?;
     Ok(State::Idle(fqdn))
-}
-
-async fn tx(stream: &mut BufStream<TcpStream>, msg: String) -> Result<()> {
-    info!("S: {}", msg);
-    stream.write_all(msg.as_bytes()).await?;
-    stream.write_u8(b'\r').await?;
-    stream.write_u8(b'\n').await?;
-    stream.flush().await?;
-
-    Ok(())
-}
-
-async fn rx(stream: &mut BufStream<TcpStream>) -> Result<String> {
-    let mut buf = String::new();
-    stream.read_line(&mut buf).await?;
-    let buf = buf.trim_end().to_string();
-    info!("C: {}", buf);
-
-    Ok(buf)
 }
 
 fn parse_message(msg: String) -> Option<Message> {

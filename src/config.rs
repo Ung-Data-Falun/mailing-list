@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct ServerConfig {
     pub port: Option<u16>,
     pub ip: Option<String>,
+    pub member_file: Option<String>,
     pub hostname: String,
 }
 
