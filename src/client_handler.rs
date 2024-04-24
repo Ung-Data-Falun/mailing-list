@@ -118,6 +118,9 @@ async fn handle_idle(stream: &mut BufStream<TcpStream>, fqdn: FQDN) -> Result<St
     let command = message.command;
     match &command as &str {
         "MAIL" => {}
+        "RSET" => {
+            tx(stream, "250 Okay".to_string()).await?;
+        }
         "QUIT" => {
             tx(
                 stream,
