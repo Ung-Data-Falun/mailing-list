@@ -24,7 +24,7 @@ fn init() -> Result<()> {
         .with_line_number(true)
         .with_source_location(true);
     tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .event_format(format)
         .init();
     color_eyre::install()?;
