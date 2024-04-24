@@ -179,6 +179,7 @@ async fn handle_from(
         None => return Err(Error::InvalidCommand.into()),
     };
     let to = to.trim();
+    recievers.push(to.to_string());
     let to = to.trim_start_matches('<');
     let to = to.trim_end_matches('>');
     let to = to.to_string();
@@ -189,7 +190,6 @@ async fn handle_from(
     )
     .await?;
 
-    recievers.push(to);
     Ok(State::From(fqdn, sender, recievers))
 }
 
