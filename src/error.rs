@@ -1,6 +1,6 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Error {
-    InvalidCommand,
+    InvalidCommand(Option<String>),
     Quit,
     InvalidMail,
 }

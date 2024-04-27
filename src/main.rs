@@ -3,9 +3,9 @@ use cli::Cli;
 use client_handler::handle_client;
 use color_eyre::eyre::Result;
 use config::get_config;
-use members::get_members;
 use tokio::{io::BufStream, net::TcpListener, runtime::Runtime};
 use tracing::{debug, info, warn, Level};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
     TokioAsyncResolver,
@@ -16,20 +16,7 @@ mod client_handler;
 mod config;
 mod error;
 mod io;
-mod members;
 mod send_mail;
-
-fn init() -> Result<()> {
-    let format = tracing_subscriber::fmt::format()
-        .with_line_number(true)
-        .with_source_location(true);
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .event_format(format)
-        .init();
-    color_eyre::install()?;
-    Ok(())
-}
 
 fn main() -> Result<()> {
     let runtime = Runtime::new()?;
@@ -42,12 +29,42 @@ fn main() -> Result<()> {
 }
 
 async fn run(resolver: TokioAsyncResolver) -> Result<()> {
-    init()?;
+    let format_stdout = tracing_subscriber::fmt::format()
+        .with_line_number(true)
+        .with_source_location(false);
+
+    let (log, _guard) = tracing_appender::non_blocking(std::fs::File::create("log.txt")?);
+    let (stdout, _guard) = tracing_appender::non_blocking(std::io::stdout());
+    let format_log = tracing_subscriber::fmt::format()
+        .with_line_number(true)
+        .with_source_location(false);
+
+    let filter_log = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(Level::DEBUG.into())
+        .from_env_lossy();
+    let log_layer = tracing_subscriber::fmt::layer()
+        .with_writer(log)
+        .event_format(format_log)
+        .with_filter(filter_log);
+    let filter_stdout = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(Level::INFO.into())
+        .from_env_lossy();
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(stdout)
+        .event_format(format_stdout)
+        .with_filter(filter_stdout);
+
+    tracing_subscriber::Registry::default()
+        .with(log_layer)
+        .with(stdout_layer)
+        .init();
+    info!("Started Logger");
+
+    color_eyre::install()?;
 
     let args = Cli::parse();
-    let config = get_config(args.config.as_deref())?;
-    let members = get_members(config.member_file.as_deref())?;
 
+    let config = get_config(args.config.as_deref())?;
     let port = config.port.unwrap_or(25);
     let ip = config.ip.clone().unwrap_or("0.0.0.0".to_string());
 
@@ -66,13 +83,15 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
                 continue;
             }
         };
-        let config = config.clone();
-        let members = members.clone();
+        let config = get_config(args.config.as_deref())?;
         let resolver = resolver.clone();
         tokio::spawn(async move {
-            match handle_client(addr, BufStream::new(stream), &config, &members, &resolver).await {
+            match handle_client(addr, BufStream::new(stream), &config, &resolver).await {
                 Ok(_) => {}
-                Err(e) => warn!("{e}"),
+                Err(e) => match e.root_cause().downcast_ref() {
+                    Some(&error::Error::Quit) => {}
+                    _ => warn!("Error: {e}"),
+                },
             };
         });
     }
