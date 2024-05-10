@@ -1,17 +1,24 @@
 use color_eyre::eyre::Result;
 use std::net::SocketAddr;
-use tokio::{io::BufStream, net::TcpStream};
-use tracing::{debug, error, info, warn};
+use tokio::net::TcpStream;
+use tracing::info;
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::{
+    client_handler::states::{
+        connected::handle_connected, from::handle_from, idle::handle_idle,
+        recieving::handle_recieving,
+    },
     config::ServerConfig,
-    error::Error,
-    io::{rx, tx},
-    send_mail::{self, send_group},
+    io::tx,
 };
 
-type FQDN = String;
+use states::{
+    connected::ConnectedState, from::FromState, idle::IdleState, recieving::RecievingState,
+};
+
+mod states;
+
 type Sender = String;
 type Reciever = String;
 
@@ -29,16 +36,16 @@ pub struct Mail {
 }
 
 #[derive(Debug, Clone)]
-enum State {
-    Connected,
-    Idle(FQDN),
-    From(FQDN, Sender, Vec<Reciever>),
-    Recieving(FQDN, Sender, Vec<Reciever>),
+pub enum State {
+    Connected(ConnectedState),
+    Idle(IdleState),
+    From(FromState),
+    Recieving(RecievingState),
 }
 
 pub async fn handle_client(
     addr: SocketAddr,
-    mut stream: BufStream<TcpStream>,
+    mut stream: TcpStream,
     config: &ServerConfig,
     resolver: &TokioAsyncResolver,
 ) -> Result<()> {
@@ -46,24 +53,21 @@ pub async fn handle_client(
     let stream = &mut stream;
 
     let init_msg = format!("220 {} SMTP Postfix", config.hostname);
-    tx(stream, init_msg).await?;
-    let mut current_state = State::Connected;
+    tx(stream, init_msg, false, true).await?;
+    let mut current_state = State::Connected(ConnectedState);
     let mut messages = Vec::new();
 
     use State::{Connected as C, From as F, Idle as I, Recieving as R};
 
     loop {
-        debug!("Current state: {current_state:?}");
         current_state = match current_state {
-            C => handle_connected(stream).await?,
-            I(fqdn) => handle_idle(stream, fqdn).await?,
-            F(fqdn, sender, recievers) => handle_from(stream, fqdn, sender, recievers).await?,
-            R(fqdn, sender, recievers) => {
+            C(state) => handle_connected(stream, state).await?,
+            I(state) => handle_idle(stream, state).await?,
+            F(state) => handle_from(stream, state).await?,
+            R(state) => {
                 handle_recieving(
                     stream,
-                    fqdn,
-                    sender,
-                    recievers,
+                    state,
                     &mut messages,
                     &config.hostname,
                     resolver,
@@ -73,216 +77,6 @@ pub async fn handle_client(
             }
         }
     }
-}
-
-async fn handle_connected(stream: &mut BufStream<TcpStream>) -> Result<State> {
-    let message = rx(stream).await?;
-    let message = match parse_message(message.clone()) {
-        Some(v) => v,
-        None => return Err(Error::InvalidCommand(Some(message)).into()),
-    };
-    let command = message.command;
-    match &command as &str {
-        "HELO" => {}
-        "EHLO" => {}
-        _ => return Err(Error::InvalidCommand(Some(command)).into()),
-    };
-
-    let foreign_host = match message.args.get(0) {
-        Some(v) => v.to_string(),
-        None => return Err(Error::InvalidCommand(Some(command)).into()),
-    };
-
-    debug!("Foreign host: {foreign_host}");
-
-    tx(
-        stream,
-        format!(
-            "250 Hello {}, nice to meet you. I'm running mailing-list. Any questions? :)",
-            foreign_host
-        ),
-    )
-    .await?;
-
-    Ok(State::Idle(foreign_host))
-}
-
-async fn handle_idle(stream: &mut BufStream<TcpStream>, fqdn: FQDN) -> Result<State> {
-    let message = rx(stream).await?;
-    let message = match parse_message(message.clone()) {
-        Some(v) => v,
-        None => return Err(Error::InvalidCommand(Some(message)).into()),
-    };
-    let command = message.command;
-    match &command as &str {
-        "MAIL" => {}
-        "RSET" => {
-            tx(stream, "250 Okay".to_string()).await?;
-        }
-        "QUIT" => {
-            tx(
-                stream,
-                format!("221 Bye bye {fqdn}. Nice to talk to you :3"),
-            )
-            .await?;
-            return Err(Error::Quit.into());
-        }
-        _ => return Err(Error::InvalidCommand(Some(command)).into()),
-    }
-
-    let from = message.args.join(" ");
-    let from = match from.strip_prefix("FROM:") {
-        Some(v) => v.to_string(),
-        None => return Err(Error::InvalidCommand(Some(from)).into()),
-    };
-    let from = from.trim();
-    let from = from.trim_start_matches('<');
-    let from = from.trim_end_matches('>');
-    let from = from.to_string();
-    debug!("Recieving a mail from {from}");
-    tx(stream, format!("250 who should get your message {from}?")).await?;
-
-    Ok(State::From(fqdn, from, Vec::new()))
-}
-
-async fn handle_from(
-    stream: &mut BufStream<TcpStream>,
-    fqdn: FQDN,
-    sender: Sender,
-    mut recievers: Vec<Reciever>,
-) -> Result<State> {
-    let message = rx(stream).await?;
-    let message = match parse_message(message.clone()) {
-        Some(v) => v,
-        None => return Err(Error::InvalidCommand(Some(message)).into()),
-    };
-    let command = message.command;
-    match &command as &str {
-        "RCPT" => {}
-        "DATA" => {
-            tx(
-                stream,
-                "354 Type your message. End with <CR><LF>.<CR><LF>".to_string(),
-            )
-            .await?;
-            debug!("Recieving message");
-            return Ok(State::Recieving(fqdn, sender, recievers));
-        }
-        _ => return Err(Error::InvalidCommand(Some(command)).into()),
-    }
-
-    let to = message.args.join(" ");
-    let to = match to.strip_prefix("TO:") {
-        Some(v) => v.to_string(),
-        None => return Err(Error::InvalidCommand(Some(to)).into()),
-    };
-    let to = to.trim();
-    recievers.push(to.to_string());
-    let to = to.trim_start_matches('<');
-    let to = to.trim_end_matches('>');
-    let to = to.to_string();
-    debug!("Sending the mail to {to}");
-    tx(
-        stream,
-        format!("250 I will make sure your message gets to {to} :3"),
-    )
-    .await?;
-
-    Ok(State::From(fqdn, sender, recievers))
-}
-
-async fn handle_recieving(
-    stream: &mut BufStream<TcpStream>,
-    fqdn: FQDN,
-    sender: Sender,
-    recievers: Vec<Reciever>,
-    messages: &mut Vec<Mail>,
-    host: &str,
-    resolver: &TokioAsyncResolver,
-    config: &ServerConfig,
-) -> Result<State> {
-    let mut message = String::new();
-    let mut current_line = String::new();
-    loop {
-        message += &current_line;
-        if current_line.ends_with(".\r\n") {
-            break;
-        }
-        current_line = rx(stream).await?;
-    }
-    debug!("{message}");
-    messages.push(Mail {
-        from: sender.clone(),
-        to: recievers.clone(),
-        payload: message.clone(),
-    });
-
-    info!("Recieved mail from {sender}");
-
-    let mut is_forwarding = true;
-    let lists = &config.lists;
-    for mail in lists.keys() {
-        if &recievers[0] == mail {
-            info!("Sending to everyone subscribing to {mail}");
-            send_group(
-                resolver,
-                host,
-                message.clone(),
-                &lists[mail].members,
-                recievers[0].clone(),
-            )
-            .await;
-            is_forwarding = false;
-        }
-    }
-    if is_forwarding && config.forwarding.is_some() && config.forwarding.clone().unwrap().enable {
-        let server = config.forwarding.clone().unwrap();
-        info!("Forwarding to {}", &recievers[0]);
-        let port = match server.enable {
-            true => server.port,
-            false => None,
-        };
-        let server = match server.enable {
-            false => match recievers[0].clone().split('@').nth(1) {
-                Some(v) => v.trim_end_matches('>'),
-                None => return Err(Error::InvalidMail.into()),
-            }
-            .to_string(),
-            true => match server.server.clone() {
-                Some(v) => v,
-                None => {
-                    error!("Config enables mail forwarding but doesn't provide an address");
-                    panic!();
-                }
-            },
-        };
-        match send_mail::send(
-            host,
-            resolver,
-            &message,
-            &recievers[0].clone(),
-            &sender,
-            &server,
-            port,
-            config.forwarding.clone().unwrap().server_tls
-        )
-        .await
-        {
-            Ok(_) => {}
-            Err(_e) => {
-                warn!("Couldn't forward mail to mail-server");
-                debug!("{_e}");
-            }
-        };
-    }
-
-    tx(
-        stream,
-        format!("250 Thank you for the message! I will make sure that it comes through"),
-    )
-    .await?;
-
-    Ok(State::Idle(fqdn))
 }
 
 fn parse_message(msg: String) -> Option<Message> {

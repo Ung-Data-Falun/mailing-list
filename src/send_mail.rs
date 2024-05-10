@@ -5,29 +5,22 @@ use std::{
 
 use color_eyre::eyre::Result;
 use rustls::pki_types::ServerName;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::TcpStream,
-};
-use tokio_rustls::client::TlsStream;
+use tokio::net::TcpStream;
 use tracing::{debug, info, warn};
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::{
     error::Error,
     io::{rx, tx},
+    AsyncStream,
 };
-
-trait AsyncStream: AsyncRead + AsyncWrite + std::marker::Unpin + Send {}
-impl AsyncStream for TcpStream {}
-impl AsyncStream for TlsStream<TcpStream> {}
 
 pub async fn send_group(
     resolver: &TokioAsyncResolver,
     host: &str,
     msg: String,
     members: &Vec<String>,
-    from: String,
+    from: &str,
 ) {
     for recipient in members {
         let server = match recipient.split('@').nth(1) {
@@ -36,11 +29,11 @@ pub async fn send_group(
         };
 
         match send(host, resolver, &msg, &recipient, &from, server, None, None).await {
-            Ok(_) => debug!("Sent mail to {recipient}"),
+            Ok(_) => {}
             Err(_e) => {
                 warn!("Couldn't send mail to {recipient}");
                 debug!("Error: {_e}");
-            },
+            }
         };
     }
 }
@@ -53,24 +46,31 @@ pub async fn send(
     from: &str,
     server: &str,
     server_port: Option<u16>,
-    local_tls_address: Option<String>
+    local_tls_address: Option<String>,
 ) -> Result<()> {
-    let stream = &mut establish_smtp_connection(server.to_string(), server_port, resolver, host, local_tls_address).await?;
+    let stream = &mut establish_smtp_connection(
+        server.to_string(),
+        server_port,
+        resolver,
+        host,
+        local_tls_address,
+    )
+    .await?;
 
-    tx(stream, format!("EHLO {host}")).await?;
-    rx(stream).await?;
-    tx(stream, format!("MAIL FROM:{from}")).await?;
-    rx(stream).await?;
-    tx(stream, format!("RCPT TO:{to}")).await?;
-    rx(stream).await?;
-    tx(stream, format!("DATA")).await?;
-    rx(stream).await?;
-    for line in msg.trim_end().split("\r\n") {
-        tx(stream, line.to_string()).await?;
-    }
-    rx(stream).await?;
-    tx(stream, format!("QUIT")).await?;
-    rx(stream).await?;
+    tx(stream, format!("EHLO {host}"), false, true).await?;
+    rx(stream, false).await?;
+    tx(stream, format!("MAIL FROM:{from}"), false, true).await?;
+    rx(stream, false).await?;
+    tx(stream, format!("RCPT TO:{to}"), false, true).await?;
+    rx(stream, false).await?;
+    tx(stream, format!("DATA"), false, true).await?;
+    rx(stream, false).await?;
+    tx(stream, msg.to_string(), true, false).await?;
+    rx(stream, false).await?;
+    tx(stream, format!("QUIT"), false, true).await?;
+    rx(stream, false).await?;
+
+    info!("Sent mail to {to}");
 
     Ok(())
 }
@@ -80,7 +80,7 @@ async fn establish_smtp_connection(
     server_port: Option<u16>,
     resolver: &TokioAsyncResolver,
     host: &str,
-    local_tls_address: Option<String>
+    local_tls_address: Option<String>,
 ) -> Result<Box<dyn AsyncStream>> {
     let server_port = server_port.unwrap_or(25);
     let ip: IpAddr;
@@ -110,16 +110,16 @@ async fn establish_smtp_connection(
     let address = SocketAddr::new(ip, server_port);
     let mut stream = TcpStream::connect(address).await?;
 
-    rx(&mut stream).await?;
-    tx(&mut stream, format!("EHLO {host}")).await?;
-    let supports_tls = rx(&mut stream)
+    rx(&mut stream, false).await?;
+    tx(&mut stream, format!("EHLO {host}"), false, true).await?;
+    let supports_tls = rx(&mut stream, false)
         .await?
         .split("\r\n")
-        .collect::<Vec<_>>()
+        .collect::<Vec<&str>>()
         .contains(&"250-STARTTLS");
     if supports_tls {
-        tx(&mut stream, "STARTTLS".to_string()).await?;
-        rx(&mut stream).await?;
+        tx(&mut stream, "STARTTLS".to_string(), false, true).await?;
+        rx(&mut stream, false).await?;
         let root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let config = rustls::ClientConfig::builder()
@@ -127,9 +127,7 @@ async fn establish_smtp_connection(
             .with_no_client_auth();
         let rc_config = Arc::new(config);
 
-        info!("Starting TLS connection with {ip}");
         let connector = tokio_rustls::TlsConnector::from(rc_config);
-        info!("Started TLS connection with {ip}");
         return Ok(Box::new(connector.connect(dns_name.clone(), stream).await?));
     } else {
         return Ok(Box::new(stream));

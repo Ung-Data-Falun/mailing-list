@@ -7,24 +7,42 @@ use tokio::{
 };
 use tracing::debug;
 
-pub async fn tx(stream: &mut (impl AsyncWrite + std::marker::Unpin), msg: String) -> Result<()> {
+pub async fn tx(
+    stream: &mut (impl AsyncWrite + std::marker::Unpin),
+    msg: String,
+    obfuscate: bool,
+    add_newline: bool,
+) -> Result<()> {
+    let mut msg = msg;
+    if add_newline {
+        msg = msg + "\r\n";
+    }
     stream.write_all(msg.as_bytes()).await?;
-    stream.write_u8(b'\r').await?;
-    stream.write_u8(b'\n').await?;
     stream.flush().await?;
-    debug!("S: {:?}", msg);
+    if !obfuscate {
+        debug!("TX: {:?}", msg);
+    } else {
+        debug!("TX: <obfuscated data>");
+    }
 
     Ok(())
 }
 
-pub async fn rx(stream: &mut (impl AsyncRead + std::marker::Unpin)) -> Result<String> {
+pub async fn rx(
+    stream: &mut (impl AsyncRead + std::marker::Unpin),
+    obfuscate: bool,
+) -> Result<String> {
     sleep(Duration::from_millis(10)).await;
     let buf = &mut [0; 1000];
     stream.read(buf).await?;
     let buf = String::from_utf8(buf.to_vec())?
         .trim_end_matches(['\0'])
         .to_string();
-    debug!("C: {:?}", buf);
+    if !obfuscate {
+        debug!("RX: {:?}", buf);
+    } else {
+        debug!("RX: <obfuscated data>")
+    }
 
     Ok(buf.to_string())
 }

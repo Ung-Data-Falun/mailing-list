@@ -3,7 +3,12 @@ use cli::Cli;
 use client_handler::handle_client;
 use color_eyre::eyre::Result;
 use config::get_config;
-use tokio::{io::BufStream, net::TcpListener, runtime::Runtime};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::{TcpListener, TcpStream},
+    runtime::Runtime,
+};
+use tokio_rustls::{client, server, TlsStream};
 use tracing::{debug, info, warn, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use trust_dns_resolver::{
@@ -17,6 +22,12 @@ mod config;
 mod error;
 mod io;
 mod send_mail;
+
+trait AsyncStream: AsyncRead + AsyncWrite + std::marker::Unpin + Send {}
+impl AsyncStream for TcpStream {}
+impl AsyncStream for TlsStream<TcpStream> {}
+impl AsyncStream for client::TlsStream<TcpStream> {}
+impl AsyncStream for server::TlsStream<TcpStream> {}
 
 fn main() -> Result<()> {
     let runtime = Runtime::new()?;
@@ -86,7 +97,7 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
         let config = get_config(args.config.as_deref())?;
         let resolver = resolver.clone();
         tokio::spawn(async move {
-            match handle_client(addr, BufStream::new(stream), &config, &resolver).await {
+            match handle_client(addr, stream, &config, &resolver).await {
                 Ok(_) => {}
                 Err(e) => match e.root_cause().downcast_ref() {
                     Some(&error::Error::Quit) => {}
