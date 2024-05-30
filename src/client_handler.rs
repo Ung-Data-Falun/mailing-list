@@ -1,7 +1,7 @@
 use color_eyre::eyre::Result;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tracing::info;
+use tracing::{error, info};
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::{
@@ -11,6 +11,7 @@ use crate::{
     },
     config::ServerConfig,
     io::tx,
+    plugins, AsyncStream,
 };
 
 use states::{
@@ -35,8 +36,14 @@ pub struct Mail {
     pub payload: String,
 }
 
+#[derive(Debug)]
+pub struct State {
+    pub state_type: StateType,
+    pub stream: Box<dyn AsyncStream>,
+}
+
 #[derive(Debug, Clone)]
-pub enum State {
+pub enum StateType {
     Connected(ConnectedState),
     Idle(IdleState),
     From(FromState),
@@ -45,33 +52,50 @@ pub enum State {
 
 pub async fn handle_client(
     addr: SocketAddr,
-    mut stream: TcpStream,
+    stream: TcpStream,
     config: &ServerConfig,
     resolver: &TokioAsyncResolver,
 ) -> Result<()> {
     info!("Handling connection from: {addr}");
-    let stream = &mut stream;
+    let mut stream = stream;
+
+    let mut loaded_plugins = Vec::new();
+
+    for plugin in config.plugins.clone() {
+        let loaded_plugin = match plugins::get_plugin(&plugin) {
+            Ok(v) => v,
+            Err(_e) => {
+                error!("Unable to load: {plugin}");
+                error!("{_e}");
+                continue;
+            }
+        };
+        loaded_plugins.push(loaded_plugin);
+    }
 
     let init_msg = format!("220 {} SMTP Postfix", config.hostname);
-    tx(stream, init_msg, false, true).await?;
-    let mut current_state = State::Connected(ConnectedState);
+    tx(&mut stream, init_msg, false, true).await?;
+    let mut current_state = State {
+        state_type: StateType::Connected(ConnectedState),
+        stream: Box::new(stream),
+    };
     let mut messages = Vec::new();
 
-    use State::{Connected as C, From as F, Idle as I, Recieving as R};
+    use StateType::{Connected as C, From as F, Idle as I, Recieving as R};
 
     loop {
-        current_state = match current_state {
-            C(state) => handle_connected(stream, state).await?,
-            I(state) => handle_idle(stream, state).await?,
-            F(state) => handle_from(stream, state).await?,
-            R(state) => {
+        current_state = match &current_state.state_type {
+            C(_) => handle_connected(current_state).await?,
+            I(_) => handle_idle(current_state).await?,
+            F(_) => handle_from(current_state).await?,
+            R(_) => {
                 handle_recieving(
-                    stream,
-                    state,
+                    current_state,
                     &mut messages,
                     &config.hostname,
                     resolver,
                     config,
+                    &loaded_plugins,
                 )
                 .await?
             }

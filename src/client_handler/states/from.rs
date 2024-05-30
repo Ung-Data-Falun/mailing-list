@@ -2,10 +2,9 @@ use color_eyre::eyre::Result;
 use tracing::debug;
 
 use crate::{
-    client_handler::{parse_message, states::recieving::RecievingState, State},
+    client_handler::{parse_message, states::recieving::RecievingState, State, StateType},
     error::Error,
     io::{rx, tx},
-    AsyncStream,
 };
 
 #[derive(Debug, Clone)]
@@ -15,7 +14,18 @@ pub struct FromState {
     pub to: Vec<String>,
 }
 
-pub async fn handle_from(stream: &mut impl AsyncStream, mut state: FromState) -> Result<State> {
+impl From<&State> for FromState {
+    fn from(value: &State) -> Self {
+        match &value.state_type {
+            StateType::From(v) => v.clone(),
+            _ => panic!(),
+        }
+    }
+}
+
+pub async fn handle_from(mut state: State) -> Result<State> {
+    let mut from_state: FromState = (&state).into();
+    let stream = &mut state.stream;
     let message = rx(stream, false).await?;
     let message = match parse_message(message.clone()) {
         Some(v) => v,
@@ -33,11 +43,14 @@ pub async fn handle_from(stream: &mut impl AsyncStream, mut state: FromState) ->
             )
             .await?;
             debug!("Recieving message");
-            return Ok(State::Recieving(RecievingState {
-                foreign_host: state.foreign_host,
-                from: state.from,
-                to: state.to,
-            }));
+            return Ok(State {
+                state_type: StateType::Recieving(RecievingState {
+                    foreign_host: from_state.foreign_host,
+                    from: from_state.from,
+                    to: from_state.to,
+                }),
+                stream: state.stream,
+            });
         }
         _ => return Err(Error::InvalidCommand(Some(command)).into()),
     }
@@ -48,7 +61,7 @@ pub async fn handle_from(stream: &mut impl AsyncStream, mut state: FromState) ->
         None => return Err(Error::InvalidCommand(Some(to)).into()),
     };
     let to = to.trim();
-    state.to.push(to.to_string());
+    from_state.to.push(to.to_string());
     let to = to.trim_start_matches('<');
     let to = to.trim_end_matches('>');
     let to = to.to_string();
@@ -61,5 +74,8 @@ pub async fn handle_from(stream: &mut impl AsyncStream, mut state: FromState) ->
     )
     .await?;
 
-    Ok(State::From(state))
+    Ok(State {
+        state_type: StateType::From(from_state),
+        stream: state.stream,
+    })
 }

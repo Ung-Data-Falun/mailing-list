@@ -1,10 +1,9 @@
 use color_eyre::eyre::Result;
 
 use crate::{
-    client_handler::{parse_message, State},
+    client_handler::{parse_message, State, StateType},
     error::Error,
     io::{rx, tx},
-    AsyncStream,
 };
 
 use super::idle::IdleState;
@@ -12,10 +11,8 @@ use super::idle::IdleState;
 #[derive(Debug, Clone)]
 pub struct ConnectedState;
 
-pub async fn handle_connected(
-    stream: &mut impl AsyncStream,
-    _state: ConnectedState,
-) -> Result<State> {
+pub async fn handle_connected(mut state: State) -> Result<State> {
+    let stream = &mut state.stream;
     let message = rx(stream, false).await?;
     let message = match parse_message(message.clone()) {
         Some(v) => v,
@@ -46,5 +43,8 @@ pub async fn handle_connected(
     )
     .await?;
 
-    Ok(State::Idle(IdleState { foreign_host }))
+    Ok(State {
+        state_type: StateType::Idle(IdleState { foreign_host }),
+        stream: state.stream,
+    })
 }

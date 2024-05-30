@@ -1,3 +1,8 @@
+#[macro_use]
+extern crate dlopen_derive;
+
+use std::fmt::Debug;
+
 use clap::Parser;
 use cli::Cli;
 use client_handler::handle_client;
@@ -21,9 +26,10 @@ mod client_handler;
 mod config;
 mod error;
 mod io;
+mod plugins;
 mod send_mail;
 
-trait AsyncStream: AsyncRead + AsyncWrite + std::marker::Unpin + Send {}
+trait AsyncStream: AsyncRead + AsyncWrite + std::marker::Unpin + Send + Debug {}
 impl AsyncStream for TcpStream {}
 impl AsyncStream for TlsStream<TcpStream> {}
 impl AsyncStream for client::TlsStream<TcpStream> {}
@@ -94,8 +100,10 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
                 continue;
             }
         };
+
         let config = get_config(args.config.as_deref())?;
         let resolver = resolver.clone();
+
         tokio::spawn(async move {
             match handle_client(addr, stream, &config, &resolver).await {
                 Ok(_) => {}

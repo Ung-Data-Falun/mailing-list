@@ -2,18 +2,28 @@ use color_eyre::eyre::Result;
 use tracing::debug;
 
 use crate::{
-    client_handler::{parse_message, states::from::FromState, State},
+    client_handler::{parse_message, states::from::FromState, State, StateType},
     error::Error,
     io::{rx, tx},
-    AsyncStream,
 };
+
+impl From<&State> for IdleState {
+    fn from(value: &State) -> Self {
+        match &value.state_type {
+            StateType::Idle(idle_state) => idle_state.clone(),
+            _ => panic!(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct IdleState {
     pub foreign_host: String,
 }
 
-pub async fn handle_idle(stream: &mut impl AsyncStream, state: IdleState) -> Result<State> {
+pub async fn handle_idle(mut state: State) -> Result<State> {
+    let idle_state: IdleState = (&state).into();
+    let stream = &mut state.stream;
     let message = rx(stream, false).await?;
     let message = match parse_message(message.clone()) {
         Some(v) => v,
@@ -28,7 +38,10 @@ pub async fn handle_idle(stream: &mut impl AsyncStream, state: IdleState) -> Res
         "QUIT" => {
             tx(
                 stream,
-                format!("221 Bye bye {}. Nice to talk to you :3", state.foreign_host),
+                format!(
+                    "221 Bye bye {}. Nice to talk to you :3",
+                    idle_state.foreign_host
+                ),
                 false,
                 true,
             )
@@ -38,23 +51,30 @@ pub async fn handle_idle(stream: &mut impl AsyncStream, state: IdleState) -> Res
         "HELO" => {
             tx(
                 stream,
-                format!("250 Hello {}", state.foreign_host),
+                format!("250 Hello {}", idle_state.foreign_host),
                 false,
                 true,
             )
             .await?;
-            return Ok(State::Idle(state));
+            return Ok(State {
+                state_type: StateType::Idle(idle_state),
+                stream: state.stream,
+            });
         }
         "EHLO" => {
             tx(
                 stream,
-                format!("250 Hello {}", state.foreign_host),
+                format!("250 Hello {}", idle_state.foreign_host),
                 false,
                 true,
             )
             .await?;
-            return Ok(State::Idle(state));
+            return Ok(State {
+                state_type: StateType::Idle(idle_state),
+                stream: state.stream,
+            });
         }
+        "STARTTLS" => {}
         _ => return Err(Error::InvalidCommand(Some(command)).into()),
     }
 
@@ -76,9 +96,12 @@ pub async fn handle_idle(stream: &mut impl AsyncStream, state: IdleState) -> Res
     )
     .await?;
 
-    Ok(State::From(FromState {
-        foreign_host: state.foreign_host,
-        from,
-        to: Vec::new(),
-    }))
+    Ok(State {
+        state_type: StateType::From(FromState {
+            foreign_host: idle_state.foreign_host,
+            from,
+            to: Vec::new(),
+        }),
+        stream: state.stream,
+    })
 }

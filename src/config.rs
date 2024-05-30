@@ -8,6 +8,7 @@ pub struct ServerConfig {
     pub ip: Option<String>,
     pub lists: HashMap<String, List>,
     pub forwarding: Option<ForwardingOptions>,
+    pub plugins: Vec<String>,
     pub hostname: String,
 }
 
