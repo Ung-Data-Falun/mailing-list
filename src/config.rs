@@ -21,8 +21,36 @@ pub struct ForwardingOptions {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct List {
+pub enum List {
+    Local(LocalList),
+    Remote(RemoteList),
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LocalList {
     pub members: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RemoteList {
+    pub location: String,
+}
+
+#[derive(Deserialize)]
+struct MedlemsLista {
+    medlemmar: Vec<String>
+}
+
+impl List {
+    pub async fn get_members(&self) -> Result<Vec<String>> {
+        Ok(match self.clone() {
+            Self::Local(list) => list.members,
+            Self::Remote(list) => {
+                let lista: MedlemsLista = toml::from_str(&tokio::fs::read_to_string(list.location).await?)?;
+                lista.medlemmar
+            }
+        })
+    }
 }
 
 pub fn get_config(file: Option<&str>) -> Result<ServerConfig> {

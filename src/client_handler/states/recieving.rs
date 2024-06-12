@@ -66,7 +66,7 @@ pub async fn handle_recieving(
     for mail in lists.keys() {
         if recieving_state.to.contains(mail) {
             info!("Sending to everyone subscribing to {mail}");
-            send_group(resolver, host, message.clone(), &lists[mail].members, mail).await;
+            send_group(resolver, host, message.clone(), &lists[mail].get_members().await?, mail).await;
             is_forwarding = false;
         }
     }
