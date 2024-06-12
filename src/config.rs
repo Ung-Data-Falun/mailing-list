@@ -36,9 +36,16 @@ pub struct RemoteList {
     pub location: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, Clone)]
 struct MedlemsLista {
-    medlemmar: Vec<String>
+    pub medlemmar: Vec<Medlem>
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug, Clone)]
+struct Medlem {
+    namn: String,
+    mail: String,
 }
 
 impl List {
@@ -47,7 +54,7 @@ impl List {
             Self::Local(list) => list.members,
             Self::Remote(list) => {
                 let lista: MedlemsLista = toml::from_str(&tokio::fs::read_to_string(list.location).await?)?;
-                lista.medlemmar
+                lista.medlemmar.iter().map(|x| x.mail.clone()).collect()
             }
         })
     }
