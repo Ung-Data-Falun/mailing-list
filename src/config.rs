@@ -54,7 +54,7 @@ impl List {
             Self::Local(list) => list.members,
             Self::Remote(list) => {
                 let lista: MedlemsLista = toml::from_str(&tokio::fs::read_to_string(list.location).await?)?;
-                lista.medlemmar.iter().map(|x| x.mail.clone()).collect()
+                lista.medlemmar.iter().map(|x| format!("{} <{}>", x.mail, x.namn)).collect()
             }
         })
     }

@@ -68,10 +68,8 @@ pub async fn send(
     tx(stream, msg.to_string(), true, false).await?;
     rx(stream, false).await?;
     tx(stream, format!("QUIT"), false, true).await?;
-    rx(stream, false).await?;
 
     info!("Sent mail to {to}");
-
     Ok(())
 }
 
