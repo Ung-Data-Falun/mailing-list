@@ -62,6 +62,7 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
     let log_layer = tracing_subscriber::fmt::layer()
         .with_writer(log)
         .event_format(format_log)
+        .with_line_number(true)
         .with_filter(filter_log);
     let filter_stdout = tracing_subscriber::EnvFilter::builder()
         .with_default_directive(Level::INFO.into())
