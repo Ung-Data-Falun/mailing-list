@@ -10,6 +10,5 @@ pub struct PluginApi {
 pub fn get_plugin(plugin: &str) -> Result<(mlpa::Plugin, Container<PluginApi>), dlopen::Error> {
     let plugin_container: Container<PluginApi> = unsafe { Container::load(plugin) }?;
     let plugin = plugin_container.get_plugin();
-    dbg!(plugin);
     Ok((plugin, plugin_container))
 }
