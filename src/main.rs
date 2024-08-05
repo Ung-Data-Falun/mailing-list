@@ -16,7 +16,7 @@ use tokio::{
     runtime::Runtime,
 };
 use tokio_rustls::{client, server, TlsStream};
-use tracing::{debug, info, warn, Level};
+use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
@@ -91,6 +91,22 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
     info!("Starting mailing-list on port {port}");
     let listener = TcpListener::bind(format!("{ip}:{port}")).await?;
     info!("Started mailing-list on port {port}");
+
+    for plugin in config.plugins.clone() {
+        let plugin = match plugins::get_plugin(&plugin) {
+            Ok(v) => v,
+            Err(_e) => {
+                error!("Unable to load: {plugin}");
+                error!("{_e}");
+                continue;
+            }
+        };
+        if let mlpa::Optional::Some(on_start) = plugin.0.on_start {
+            unsafe {
+                on_start();
+            }
+        };
+    }
 
     loop {
         let (stream, addr) = match listener.accept().await {

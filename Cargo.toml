@@ -24,4 +24,4 @@ tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 trust-dns-resolver = "0.23.2"
 webpki-roots = "0.26.1"
-mlpa = "0.3.0"
+mlpa = "0.4.0"
