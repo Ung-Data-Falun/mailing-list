@@ -3,13 +3,15 @@
 #[macro_use]
 extern crate dlopen_derive;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Mutex};
 
 use clap::Parser;
 use cli::Cli;
 use client_handler::handle_client;
 use color_eyre::eyre::Result;
 use config::get_config;
+use dlopen::wrapper::Container;
+use plugins::PluginApi;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
@@ -36,6 +38,8 @@ impl AsyncStream for TcpStream {}
 impl AsyncStream for TlsStream<TcpStream> {}
 impl AsyncStream for client::TlsStream<TcpStream> {}
 impl AsyncStream for server::TlsStream<TcpStream> {}
+
+pub static PLUGINS: Mutex<Option<Vec<(mlpa::Plugin, Container<PluginApi>)>>> = Mutex::new(None);
 
 fn main() -> Result<()> {
     let runtime = Runtime::new()?;
@@ -92,6 +96,8 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
     let listener = TcpListener::bind(format!("{ip}:{port}")).await?;
     info!("Started mailing-list on port {port}");
 
+    let mut plugins = Vec::new();
+
     for plugin in config.plugins.clone() {
         let plugin = match plugins::get_plugin(&plugin) {
             Ok(v) => v,
@@ -106,7 +112,10 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
                 on_start();
             }
         };
+        plugins.push(plugin);
     }
+
+    *PLUGINS.lock().unwrap() = Some(plugins);
 
     loop {
         let (stream, addr) = match listener.accept().await {

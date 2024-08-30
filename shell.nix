@@ -3,6 +3,7 @@
 pkgs.mkShell rec {
     buildInputs = with pkgs; [
       rustup
+      gdb
     ];
     RUSTC_VERSION = "stable"; 
     shellHook = ''

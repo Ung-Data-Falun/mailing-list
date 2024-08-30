@@ -1,7 +1,7 @@
 use color_eyre::eyre::Result;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tracing::{error, info};
+use tracing::info;
 use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     },
     config::ServerConfig,
     io::tx,
-    plugins, AsyncStream,
+    AsyncStream,
 };
 
 use states::{
@@ -59,20 +59,6 @@ pub async fn handle_client(
     info!("Handling connection from: {addr}");
     let mut stream = stream;
 
-    let mut loaded_plugins = Vec::new();
-
-    for plugin in config.plugins.clone() {
-        let loaded_plugin = match plugins::get_plugin(&plugin) {
-            Ok(v) => v,
-            Err(_e) => {
-                error!("Unable to load: {plugin}");
-                error!("{_e}");
-                continue;
-            }
-        };
-        loaded_plugins.push(loaded_plugin);
-    }
-
     let init_msg = format!("220 {} SMTP Postfix", config.hostname);
     tx(&mut stream, init_msg, false, true).await?;
     let mut current_state = State {
@@ -95,7 +81,6 @@ pub async fn handle_client(
                     &config.hostname,
                     resolver,
                     config,
-                    &loaded_plugins,
                 )
                 .await?
             }

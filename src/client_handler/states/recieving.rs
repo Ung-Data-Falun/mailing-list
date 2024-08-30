@@ -1,7 +1,6 @@
 use std::ffi::CString;
 
 use color_eyre::eyre::Result;
-use dlopen::wrapper::Container;
 use tracing::{debug, error, info, warn};
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -10,7 +9,6 @@ use crate::{
     config::ServerConfig,
     error::Error,
     io::{rx, tx},
-    plugins::PluginApi,
     send_mail::{self, send_group},
 };
 
@@ -36,7 +34,6 @@ pub async fn handle_recieving(
     host: &str,
     resolver: &TokioAsyncResolver,
     config: &ServerConfig,
-    loaded_plugins: &Vec<(mlpa::Plugin, Container<PluginApi>)>,
 ) -> Result<State> {
     let recieving_state: RecievingState = (&state).into();
     let stream = &mut state.stream;
@@ -55,15 +52,19 @@ pub async fn handle_recieving(
         payload: message.clone(),
     });
 
-    for plugin in loaded_plugins {
-        if let mlpa::Optional::Some(message_handler) = plugin.0.message_handler {
-            let cstring = match CString::new(message.clone()) {
-                Ok(v) => v,
-                Err(_e) => continue,
-            };
-            println!("Running plugin");
-            unsafe {
-                message_handler(cstring.as_ptr());
+    {
+        let data = crate::PLUGINS.lock().unwrap();
+        let plugins = data.as_ref().unwrap();
+        for plugin in plugins {
+            if let mlpa::Optional::Some(message_handler) = plugin.0.message_handler {
+                let cstring = match CString::new(message.clone()) {
+                    Ok(v) => v,
+                    Err(_e) => continue,
+                };
+                println!("Running plugin");
+                unsafe {
+                    let _ = std::thread::spawn(move || message_handler(cstring.as_ptr())).join();
+                }
             }
         }
     }
@@ -75,7 +76,14 @@ pub async fn handle_recieving(
     for mail in lists.keys() {
         if recieving_state.to.contains(mail) {
             info!("Sending to everyone subscribing to {mail}");
-            send_group(resolver, host, message.clone(), &lists[mail].get_members().await?, mail).await;
+            send_group(
+                resolver,
+                host,
+                message.clone(),
+                &lists[mail].get_members().await?,
+                mail,
+            )
+            .await;
             is_forwarding = false;
         }
     }
