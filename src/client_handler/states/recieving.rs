@@ -35,6 +35,8 @@ pub async fn handle_recieving(
     resolver: &TokioAsyncResolver,
     config: &ServerConfig,
 ) -> Result<State> {
+    let mut result: String = "250 Thank you for the message! I will make sure that it comes through".to_string();
+
     let recieving_state: RecievingState = (&state).into();
     let stream = &mut state.stream;
     let mut message = String::new();
@@ -123,6 +125,7 @@ pub async fn handle_recieving(
             Ok(_) => {}
             Err(_e) => {
                 warn!("Couldn't forward mail to mail-server");
+                result = "450".to_string();
                 debug!("{_e}");
             }
         };
@@ -130,7 +133,7 @@ pub async fn handle_recieving(
 
     tx(
         stream,
-        format!("250 Thank you for the message! I will make sure that it comes through"),
+        format!(result),
         false,
         true,
     )
