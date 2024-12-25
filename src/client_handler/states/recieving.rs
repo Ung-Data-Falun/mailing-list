@@ -133,7 +133,7 @@ pub async fn handle_recieving(
 
     tx(
         stream,
-        format!(result),
+        format!("{result}"),
         false,
         true,
     )
