@@ -30,8 +30,10 @@ mod client_handler;
 mod config;
 mod error;
 mod io;
+mod mail;
 mod plugins;
 mod send_mail;
+mod stream;
 
 trait AsyncStream: AsyncRead + AsyncWrite + std::marker::Unpin + Send + Debug {}
 impl AsyncStream for TcpStream {}
@@ -135,10 +137,7 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
         tokio::spawn(async move {
             match handle_client(addr, stream, &config, &resolver).await {
                 Ok(_) => {}
-                Err(e) => match e.root_cause().downcast_ref() {
-                    Some(&error::Error::Quit) => {}
-                    _ => warn!("Error: {e}"),
-                },
+                Err(e) => warn!("Error: {e}"),
             };
         });
     }

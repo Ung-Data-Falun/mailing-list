@@ -1,102 +1,164 @@
-use color_eyre::eyre::Result;
 use std::net::SocketAddr;
-use tokio::net::TcpStream;
+
+use smtp_proto::{Request, Response};
+use std::io::Result;
+use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tracing::info;
-use trust_dns_resolver::TokioAsyncResolver;
-
-use crate::{
-    client_handler::states::{
-        connected::handle_connected, from::handle_from, idle::handle_idle,
-        recieving::handle_recieving,
-    },
-    config::ServerConfig,
-    io::tx,
-    AsyncStream,
+use trust_dns_resolver::{
+    name_server::{GenericConnector, TokioRuntimeProvider},
+    AsyncResolver,
 };
 
-use states::{
-    connected::ConnectedState, from::FromState, idle::IdleState, recieving::RecievingState,
-};
+static CAPABILITIES: &'static [u8] = br#"250 Helu!
+250 ENHANCEDSTATUSCODES
+"#;
 
-mod states;
-
-type Sender = String;
-type Reciever = String;
-
-#[derive(Debug, Clone)]
-struct Message {
-    command: String,
-    args: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Mail {
-    pub from: Sender,
-    pub to: Vec<Reciever>,
-    pub payload: String,
-}
-
-#[derive(Debug)]
-pub struct State {
-    pub state_type: StateType,
-    pub stream: Box<dyn AsyncStream>,
-}
-
-#[derive(Debug, Clone)]
-pub enum StateType {
-    Connected(ConnectedState),
-    Idle(IdleState),
-    From(FromState),
-    Recieving(RecievingState),
-}
+use crate::{config::ServerConfig, mail::Mail, stream::Stream};
 
 pub async fn handle_client(
-    addr: SocketAddr,
+    _addr: SocketAddr,
     stream: TcpStream,
     config: &ServerConfig,
-    resolver: &TokioAsyncResolver,
+    resolver: &AsyncResolver<GenericConnector<TokioRuntimeProvider>>,
 ) -> Result<()> {
-    info!("Handling connection from: {addr}");
-    let mut stream = stream;
+    let mut stream = Stream::Tcp(stream);
 
-    let init_msg = format!("220 {} SMTP Postfix", config.hostname);
-    tx(&mut stream, init_msg, false, true).await?;
-    let mut current_state = State {
-        state_type: StateType::Connected(ConnectedState),
-        stream: Box::new(stream),
-    };
-    let mut messages = Vec::new();
-
-    use StateType::{Connected as C, From as F, Idle as I, Recieving as R};
+    let host = init_connection(&mut stream).await?;
+    info!("Got connection from {host}.");
 
     loop {
-        current_state = match &current_state.state_type {
-            C(_) => handle_connected(current_state).await?,
-            I(_) => handle_idle(current_state).await?,
-            F(_) => handle_from(current_state).await?,
-            R(_) => {
-                handle_recieving(
-                    current_state,
-                    &mut messages,
-                    &config.hostname,
-                    resolver,
-                    config,
-                )
-                .await?
+        let mail = recieve_mail(&mut stream).await?;
+        match mail.handle(config, resolver).await {
+            Ok(_) => {
+                stream
+                    .send_response(Response::new(
+                        250,
+                        2,
+                        6,
+                        0,
+                        "Message Recieved Succesfully!!",
+                    ))
+                    .await?
             }
-        }
+            Err(_) => {
+                stream
+                    .send_response(Response::new(552, 5, 5, 0, "Woopsie"))
+                    .await?
+            }
+        };
     }
 }
 
-fn parse_message(msg: String) -> Option<Message> {
-    let msg = msg.trim_end();
-    let mut parts = msg.splitn(2, ' ');
-    let command = parts.next()?.to_uppercase();
-    let args = parts
-        .next()
-        .unwrap_or(" ")
-        .split(' ')
-        .map(|x| x.to_owned())
-        .collect();
-    Some(Message { command, args })
+async fn recieve_mail(stream: &mut Stream) -> Result<Mail> {
+    let sender = get_sender(stream).await?;
+    let recipients = get_recipients(stream).await?;
+
+    let data = String::from_utf8_lossy(&stream.recieve_mail().await?).to_string();
+
+    let mail = Mail {
+        sender,
+        recipients,
+        data,
+    };
+
+    Ok(mail)
+}
+
+async fn get_recipients(stream: &mut Stream) -> Result<Vec<String>> {
+    let mut recipients: Vec<String> = Vec::new();
+    loop {
+        info!("Getting reciever");
+
+        let request = stream.recieve_request().await?;
+        let to = match request {
+            Request::Rcpt { to } => to,
+            Request::Data => break,
+            _ => {
+                stream.protocol_error().await?;
+                continue;
+            }
+        };
+
+        let address = to.address;
+
+        stream
+            .send_response(Response::new(
+                250,
+                2,
+                1,
+                0,
+                format!("Reciever {address} okay"),
+            ))
+            .await?;
+
+        recipients.push(address)
+    }
+    stream
+        .send_response(Response::new(354, 2, 0, 0, "End with CRLF.CRLF"))
+        .await?;
+    return Ok(recipients);
+}
+
+async fn get_sender(stream: &mut Stream) -> Result<String> {
+    loop {
+        info!("Getting Sender");
+        let request = stream.recieve_request().await?;
+        let from = match request {
+            Request::Mail { from } => from,
+            _ => {
+                stream.protocol_error().await?;
+                continue;
+            }
+        };
+
+        let address = from.address;
+
+        stream
+            .send_response(Response::new(
+                250,
+                2,
+                1,
+                0,
+                format!("Originator {address} okay"),
+            ))
+            .await?;
+
+        return Ok(address);
+    }
+}
+
+async fn init_connection(stream: &mut Stream) -> Result<String> {
+    stream
+        .send_response(Response::new(220, 2, 2, 0, "SMTP mailing-list"))
+        .await?;
+
+    info!("Greeted");
+
+    loop {
+        let request = stream.recieve_request().await?;
+
+        let (host, esmtp) = match request {
+            Request::Ehlo { host } => (host, true),
+            Request::Helo { host } => (host, false),
+            _request => {
+                stream.protocol_error().await?;
+                continue;
+            }
+        };
+
+        info!("Host: {host}");
+        info!("ESMTP: {esmtp}");
+
+        if esmtp {
+            (*stream.deref()).write_all(CAPABILITIES).await?;
+        } else {
+            stream
+                .send_response(Response::new(250, 2, 5, 0, format!("Welcome {host}")))
+                .await?;
+        }
+
+        info!("Finished introduction");
+
+        return Ok(host);
+    }
 }

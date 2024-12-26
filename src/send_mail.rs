@@ -28,7 +28,7 @@ pub async fn send_group(
             None => continue,
         };
 
-        match send(host, resolver, &msg, &recipient, &from, server, None, None).await {
+        match send(host, resolver, &msg, &recipient, &from, server, None, server.to_string()).await {
             Ok(_) => {}
             Err(_e) => {
                 warn!("Couldn't send mail to {recipient}");
@@ -46,7 +46,7 @@ pub async fn send(
     from: &str,
     server: &str,
     server_port: Option<u16>,
-    local_tls_address: Option<String>,
+    local_tls_address: String
 ) -> Result<()> {
     let stream = &mut establish_smtp_connection(
         server.to_string(),
@@ -78,7 +78,7 @@ async fn establish_smtp_connection(
     server_port: Option<u16>,
     resolver: &TokioAsyncResolver,
     host: &str,
-    local_tls_address: Option<String>,
+    local_tls_address: String,
 ) -> Result<Box<dyn AsyncStream>> {
     let server_port = server_port.unwrap_or(25);
     let ip: IpAddr;
@@ -88,7 +88,7 @@ async fn establish_smtp_connection(
             .trim_start_matches('[')
             .trim_end_matches(']')
             .to_string();
-        dns_name = local_tls_address.unwrap_or(server.clone()).try_into()?;
+        dns_name = local_tls_address.try_into()?;
         ip = server.parse::<IpAddr>()?;
     } else {
         let lookup = resolver.mx_lookup(server.clone()).await?;

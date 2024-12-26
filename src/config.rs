@@ -16,7 +16,7 @@ pub struct ServerConfig {
 pub struct ForwardingOptions {
     pub enable: bool,
     pub server: Option<String>,
-    pub server_tls: Option<String>,
+    pub server_tls: String,
     pub port: Option<u16>,
 }
 
