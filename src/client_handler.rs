@@ -9,7 +9,8 @@ use trust_dns_resolver::{
     AsyncResolver,
 };
 
-static CAPABILITIES: &'static [u8] = br#"250 Helu!
+static CAPABILITIES: &'static [u8] = br#"250-Helu!
+250-SIZE 14680064
 250 ENHANCEDSTATUSCODES
 "#;
 

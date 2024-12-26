@@ -65,6 +65,10 @@ impl Stream {
             let mut buffer: Vec<u8> = Vec::new();
             let _num_bytes_recieved = bufreader.read_until(b'\n', &mut buffer).await?;
 
+            if buffer.trim_ascii().is_empty() {
+                continue;
+            }
+
             match Request::parse(&mut buffer.iter()) {
                 Ok(request) => match request {
                     Request::Quit => return Err(self.quit().await),
