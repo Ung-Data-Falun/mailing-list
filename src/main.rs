@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate dlopen_derive;
 
-use std::{fmt::Debug, sync::Mutex};
+use std::{fmt::Debug, sync::Mutex, time::Duration};
 
 use clap::Parser;
 use cli::Cli;
@@ -15,7 +15,7 @@ use plugins::PluginApi;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
-    runtime::Runtime,
+    runtime::Runtime, time::timeout,
 };
 use tokio_rustls::{client, server, TlsStream};
 use tracing::{debug, error, info, warn, Level};
@@ -132,13 +132,11 @@ async fn run(resolver: TokioAsyncResolver) -> Result<()> {
         };
 
         let config = get_config(args.config.as_deref())?;
-        let resolver = resolver.clone();
-
-        tokio::spawn(async move {
-            match handle_client(addr, stream, &config, &resolver).await {
+        tokio::spawn(timeout(Duration::from_secs(10), async move {
+            match handle_client(addr, stream, &config).await {
                 Ok(_) => {}
                 Err(e) => warn!("Error: {e}"),
             };
-        });
+        }));
     }
 }
