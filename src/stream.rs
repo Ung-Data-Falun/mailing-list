@@ -1,6 +1,6 @@
 use std::{
     io::{Cursor, Error, ErrorKind, Result},
-    sync::Arc,
+    sync::Arc, time::Duration,
 };
 
 use color_eyre::eyre::eyre;
@@ -8,7 +8,7 @@ use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName
 use smtp_proto::{response::parser::ResponseReceiver, Request, Response};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream,
+    net::TcpStream, time::sleep,
 };
 use tokio_rustls::{TlsAcceptor, TlsStream};
 use tracing::debug;
@@ -212,6 +212,8 @@ impl Stream {
 
     pub async fn recieve_capabilities(&mut self) -> color_eyre::eyre::Result<Vec<String>> {
         let stream = *self.deref();
+
+        sleep(Duration::from_millis(10)).await;
 
         let mut buf = Vec::new();
         let _num_recieved_bytes = stream.read_buf(&mut buf);
