@@ -54,7 +54,6 @@ pub async fn send(
     let mut rcpt_to = RcptTo::default();
     rcpt_to.address = to;
 
-    let _response = stream.recieve_response().await?;
     stream
         .send_request(Request::Mail { from: mail_from })
         .await?;
@@ -100,6 +99,7 @@ async fn establish_smtp_connection(
         let mut stream = stream.start_tls_client(tls).await?;
 
         stream.send_request(Request::Ehlo { host }).await?;
+        let _response = stream.recieve_response().await?;
         return Ok(stream);
     } else {
         debug!("Server does not supports tls");

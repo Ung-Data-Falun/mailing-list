@@ -222,6 +222,8 @@ impl Stream {
 
         let buf = String::from_utf8_lossy(&buf);
 
+        dbg!(&buf);
+
         let capabilties = Self::parse_capabilties(buf.to_string())?;
 
         debug!("Capabilties recieved");
