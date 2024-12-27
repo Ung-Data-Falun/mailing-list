@@ -1,4 +1,5 @@
 use tracing::info;
+use tracing_subscriber::fmt::format;
 use trust_dns_resolver::{
     name_server::{GenericConnector, TokioRuntimeProvider},
     AsyncResolver,
@@ -25,12 +26,14 @@ type Result<T> = std::result::Result<T, Error>;
 
 impl Mail {
     pub async fn handle(
-        self,
+        mut self,
         config: &ServerConfig,
         resolver: &AsyncResolver<GenericConnector<TokioRuntimeProvider>>,
     ) -> Result<()> {
         let lists = &config.lists;
         let forwarding_enabled = config.forwarding.clone().is_some_and(|x| x.enable);
+
+        self.sender = format!("<{}>", self.sender);
 
         for recipient in self.recipients {
             if lists.contains_key(&recipient) {
