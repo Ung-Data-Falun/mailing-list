@@ -218,7 +218,7 @@ impl Stream {
         sleep(Duration::from_millis(10)).await;
 
         let mut buf = [0;1000];
-        let _num_recieved_bytes = stream.read(&mut buf);
+        let _num_recieved_bytes = stream.read(&mut buf).await?;
 
         let buf = String::from_utf8_lossy(&buf);
 
