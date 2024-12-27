@@ -25,6 +25,13 @@ pub async fn handle_client(
 ) -> Result<()> {
     let mut stream = Stream::Tcp(stream);
 
+    stream
+        .send_response(Response::new(220, 2, 2, 0, "SMTP mailing-list"))
+        .await?;
+
+    info!("Greeted");
+
+
     let host = init_connection(&mut stream).await?;
     info!("Got connection from {host}.");
 
@@ -151,12 +158,6 @@ async fn get_sender(stream: &mut Stream, mut request: Request<String>) -> Result
 }
 
 async fn init_connection(stream: &mut Stream) -> Result<String> {
-    stream
-        .send_response(Response::new(220, 2, 2, 0, "SMTP mailing-list"))
-        .await?;
-
-    info!("Greeted");
-
     loop {
         let request = stream.recieve_request().await?;
 
