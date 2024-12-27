@@ -28,7 +28,18 @@ pub async fn send_group(
             None => continue,
         };
 
-        match send(host, resolver, &msg, &recipient, &from, server, None, server.to_string()).await {
+        match send(
+            host,
+            resolver,
+            &msg,
+            &recipient,
+            &from,
+            server,
+            None,
+            server.to_string(),
+        )
+        .await
+        {
             Ok(_) => {}
             Err(_e) => {
                 warn!("Couldn't send mail to {recipient}");
@@ -46,7 +57,7 @@ pub async fn send(
     from: &str,
     server: &str,
     server_port: Option<u16>,
-    local_tls_address: String
+    local_tls_address: String,
 ) -> Result<()> {
     let stream = &mut establish_smtp_connection(
         server.to_string(),

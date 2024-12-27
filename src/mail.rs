@@ -1,5 +1,4 @@
 use tracing::info;
-use tracing_subscriber::fmt::format;
 use trust_dns_resolver::{
     name_server::{GenericConnector, TokioRuntimeProvider},
     AsyncResolver,
@@ -75,9 +74,11 @@ impl Mail {
                 &server,
                 forwarding.port,
                 forwarding.server_tls,
-            ).await {
+            )
+            .await
+            {
                 Ok(_) => (),
-                Err(_) => return Err(Error::SendError)
+                Err(_) => return Err(Error::SendError),
             };
         }
 

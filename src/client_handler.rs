@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 
 use smtp_proto::{Request, Response};
-use tokio_rustls::TlsStream;
 use std::io::Result;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tracing::info;
@@ -29,8 +28,21 @@ pub async fn handle_client(
     let host = init_connection(&mut stream).await?;
     info!("Got connection from {host}.");
 
+    let mut request = stream.recieve_request().await?;
+
+    let mut starttls = false;
+    match &request {
+        &Request::StartTls => starttls = true,
+        _ => {}
+    };
+
+    if starttls {
+        stream = stream.start_tls().await?;
+        request = stream.recieve_request().await?;
+    }
+
     loop {
-        let mail = recieve_mail(&mut stream).await?;
+        let mail = recieve_mail(&mut stream, request.clone()).await?;
         match mail.handle(config, resolver).await {
             Ok(_) => {
                 stream
@@ -52,8 +64,8 @@ pub async fn handle_client(
     }
 }
 
-async fn recieve_mail(stream: &mut Stream) -> Result<Mail> {
-    let sender = get_sender(stream).await?;
+async fn recieve_mail(stream: &mut Stream, to: Request<String>) -> Result<Mail> {
+    let sender = get_sender(stream, to).await?;
     let recipients = get_recipients(stream).await?;
 
     let data = String::from_utf8_lossy(&stream.recieve_mail().await?).to_string();
@@ -102,16 +114,17 @@ async fn get_recipients(stream: &mut Stream) -> Result<Vec<String>> {
     return Ok(recipients);
 }
 
-async fn get_sender(stream: &mut Stream) -> Result<String> {
+async fn get_sender(stream: &mut Stream, mut request: Request<String>) -> Result<String> {
+    let mut is_first = true;
     loop {
         info!("Getting Sender");
-        let request = stream.recieve_request().await?;
+        if !is_first {
+            request = stream.recieve_request().await?;
+        } else {
+            is_first = false;
+        }
         let from = match request {
             Request::Mail { from } => from,
-            Request::StartTls => {
-                stream.start_tls().await?;
-                continue;
-            }
             _ => {
                 stream.protocol_error().await?;
                 continue;
