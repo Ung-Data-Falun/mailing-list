@@ -47,7 +47,7 @@ impl Stream {
         Ok(())
     }
 
-    pub async fn recieve_response(&mut self) -> color_eyre::eyre::Result<Response<String>> {
+    pub async fn recieve_response(&mut self) -> color_eyre::eyre::Result<String> {
         let stream = *self.deref();
 
         let mut bufreader = BufReader::new(stream);
@@ -55,12 +55,11 @@ impl Stream {
         let mut buffer: Vec<u8> = Vec::new();
         let _num_bytes_recieved = bufreader.read_until(b'\n', &mut buffer).await?;
 
-        debug!("We are C: S: {}", String::from_utf8_lossy(&buffer));
+        let response = String::from_utf8_lossy(&buffer);
 
-        let mut reciever = ResponseReceiver::default();
-        let response = reciever.parse(&mut buffer.iter())?;
+        debug!("We are C: S: {response}");
 
-        Ok(response)
+        Ok(response.to_string())
     }
 
     pub async fn recieve_request(&mut self) -> Result<Request<String>> {
@@ -222,12 +221,9 @@ impl Stream {
 
         let buf = String::from_utf8_lossy(&buf);
 
-        dbg!(&buf);
-
         let capabilties = Self::parse_capabilties(buf.to_string())?;
 
         debug!("Capabilties recieved");
-        dbg!(&capabilties);
 
         Ok(capabilties)
     }
