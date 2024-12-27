@@ -96,7 +96,15 @@ async fn establish_smtp_connection(
 
         debug!("Initiating TLS handshake");
 
-        let mut stream = stream.start_tls_client(if address.starts_with('[') { tls } else { address }).await?;
+        let mut stream = stream
+            .start_tls_client(
+                if address.starts_with(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) {
+                    tls
+                } else {
+                    address
+                },
+            )
+            .await?;
 
         stream.send_request(Request::Ehlo { host }).await?;
         let _capabilities = stream.recieve_capabilities().await?;
