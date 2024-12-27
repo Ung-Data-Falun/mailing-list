@@ -225,6 +225,7 @@ impl Stream {
         let capabilties = Self::parse_capabilties(buf.to_string())?;
 
         debug!("Capabilties recieved");
+        dbg!(&capabilties);
 
         Ok(capabilties)
     }

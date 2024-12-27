@@ -91,14 +91,18 @@ async fn establish_smtp_connection(
     let supports_tls = capabilities.contains(&"STARTTLS".to_string());
 
     if supports_tls {
+        debug!("Server supports tls");
         stream.send_request::<String>(Request::StartTls).await?;
         let _response = stream.recieve_response().await?;
+
+        debug!("Initiating TLS handshake");
 
         let mut stream = stream.start_tls_client(tls).await?;
 
         stream.send_request(Request::Ehlo { host }).await?;
         return Ok(stream);
     } else {
+        debug!("Server does not supports tls");
         return Ok(stream);
     }
 }
