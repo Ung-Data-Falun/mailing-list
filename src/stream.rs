@@ -213,14 +213,18 @@ impl Stream {
     pub async fn recieve_capabilities(&mut self) -> color_eyre::eyre::Result<Vec<String>> {
         let stream = *self.deref();
 
+        debug!("Recieving capabilties");
+
         sleep(Duration::from_millis(10)).await;
 
-        let mut buf = Vec::new();
-        let _num_recieved_bytes = stream.read_buf(&mut buf);
+        let mut buf = [0;1000];
+        let _num_recieved_bytes = stream.read(&mut buf);
 
         let buf = String::from_utf8_lossy(&buf);
 
         let capabilties = Self::parse_capabilties(buf.to_string())?;
+
+        debug!("Capabilties recieved");
 
         Ok(capabilties)
     }
