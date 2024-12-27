@@ -39,6 +39,8 @@ pub async fn handle_client(
     if starttls {
         stream.send_response(Response::new(220, 2, 2, 0, "Go ahead")).await?;
         stream = stream.start_tls().await?;
+
+        init_connection(&mut stream).await?;
         request = stream.recieve_request().await?;
     }
 
