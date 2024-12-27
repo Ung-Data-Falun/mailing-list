@@ -99,7 +99,7 @@ async fn establish_smtp_connection(
         let mut stream = stream.start_tls_client(tls).await?;
 
         stream.send_request(Request::Ehlo { host }).await?;
-        let _response = stream.recieve_response().await?;
+        let _capabilities = stream.recieve_capabilities().await?;
         return Ok(stream);
     } else {
         debug!("Server does not supports tls");

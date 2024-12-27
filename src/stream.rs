@@ -5,7 +5,7 @@ use std::{
 
 use color_eyre::eyre::eyre;
 use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName};
-use smtp_proto::{response::parser::ResponseReceiver, Request, Response};
+use smtp_proto::{Request, Response};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream, time::sleep,
