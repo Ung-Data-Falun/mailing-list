@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use smtp_proto::{Request, Response};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
