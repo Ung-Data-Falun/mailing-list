@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use smtp_proto::{Request, Response};
+use tokio_rustls::TlsStream;
 use std::io::Result;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tracing::info;
@@ -11,6 +12,7 @@ use trust_dns_resolver::{
 
 static CAPABILITIES: &'static [u8] = br#"250-Helu!
 250-SIZE 14680064
+250-STARTTLS
 250 ENHANCEDSTATUSCODES
 "#;
 
@@ -106,6 +108,10 @@ async fn get_sender(stream: &mut Stream) -> Result<String> {
         let request = stream.recieve_request().await?;
         let from = match request {
             Request::Mail { from } => from,
+            Request::StartTls => {
+                stream.start_tls().await?;
+                continue;
+            }
             _ => {
                 stream.protocol_error().await?;
                 continue;

@@ -1,11 +1,12 @@
-use std::io::{Cursor, Error, ErrorKind, Result};
+use std::{io::{Cursor, Error, ErrorKind, Result}, path::PathBuf, str::FromStr, sync::Arc};
 
+use rustls::{pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer}, ClientConfig, RootCertStore};
 use smtp_proto::{Request, Response};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
-use tokio_rustls::TlsStream;
+use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
 use crate::AsyncStream;
 
@@ -87,5 +88,26 @@ impl Stream {
             .await;
 
         Error::new(ErrorKind::ConnectionReset, "Client Quit")
+    }
+
+    pub async fn start_tls(self) -> color_eyre::eyre::Result<Self> {
+        let stream = match self {
+            Self::Tcp(a) => a,
+            Self::Tls(_) => {
+                return Err(Error::new(ErrorKind::Unsupported, "tfw någon försöker starttls två gånger").into())
+            }
+        };
+
+        let certs = CertificateDer::pem_file_iter("cert.pem").unwrap().map(|x| x.unwrap()).collect::<Vec<_>>();
+        let key = PrivateKeyDer::from_pem_file("privkey.pem")?;
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)?;
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+
+        let stream = acceptor.accept(stream).await?;
+
+        return Ok(Self::Tls(stream));
     }
 }
