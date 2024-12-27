@@ -3,13 +3,15 @@ use std::{
     sync::Arc,
 };
 
+use color_eyre::eyre::eyre;
 use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
-use smtp_proto::{Request, Response};
+use smtp_proto::{response::parser::ResponseReceiver, Request, Response};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
 use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tracing::debug;
 
 use crate::AsyncStream;
 
@@ -35,9 +37,30 @@ impl Stream {
         let mut response_string = Cursor::new(Vec::new());
         response.write(&mut response_string)?;
 
+        debug!(
+            "We are S: S: {}",
+            String::from_utf8_lossy(&response_string.clone().into_inner())
+        );
+
         stream.write_all(&response_string.into_inner()).await?;
 
         Ok(())
+    }
+
+    pub async fn get_response(&mut self) -> color_eyre::eyre::Result<Response<String>> {
+        let stream = *self.deref();
+
+        let mut bufreader = BufReader::new(stream);
+
+        let mut buffer: Vec<u8> = Vec::new();
+        let _num_bytes_recieved = bufreader.read_until(b'\n', &mut buffer).await?;
+
+        debug!("We are C: S: {}", String::from_utf8_lossy(&buffer));
+
+        let mut reciever = ResponseReceiver::default();
+        let response = reciever.parse(&mut buffer.iter())?;
+
+        Ok(response)
     }
 
     pub async fn protocol_error(&mut self) -> Result<()> {
@@ -73,6 +96,8 @@ impl Stream {
                 continue;
             }
 
+            debug!("We are S: C: {}", String::from_utf8_lossy(&buffer));
+
             match Request::parse(&mut buffer.iter()) {
                 Ok(request) => match request {
                     Request::Quit => return Err(self.quit().await),
@@ -83,6 +108,29 @@ impl Stream {
                 }
             };
         }
+    }
+
+    pub async fn send_request<T: std::fmt::Display>(&mut self, request: Request<T>) -> Result<()> {
+        let stream = *self.deref();
+
+        use Request as R;
+        let request = match request {
+            R::Quit => "QUIT",
+            R::Data => "DATA",
+            R::StartTls => "STARTTLS",
+            R::Ehlo { host } => &format!("EHLO {host}"),
+            R::Helo { host } => &format!("HELO {host}"),
+            R::Mail { from } => &format!("MAIL FROM:{}", from.address),
+            R::Rcpt { to } => &format!("RCPT TO:{}", to.address),
+            _ => unimplemented!(),
+        };
+        let request = request.to_string() + "\r\n";
+
+        debug!("We are C: C: {}", &request);
+
+        stream.write_all(&request.as_bytes()).await?;
+
+        Ok(())
     }
 
     pub async fn quit(&mut self) -> Error {
