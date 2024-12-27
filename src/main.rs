@@ -15,21 +15,16 @@ use plugins::PluginApi;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
-    runtime::Runtime, time::timeout,
+    runtime::Runtime,
+    time::timeout,
 };
 use tokio_rustls::{client, server, TlsStream};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    TokioAsyncResolver,
-};
 
 mod cli;
 mod client_handler;
 mod config;
-mod error;
-mod io;
 mod mail;
 mod plugins;
 mod send_mail;
@@ -45,15 +40,12 @@ pub static PLUGINS: Mutex<Option<Vec<(mlpa::Plugin, Container<PluginApi>)>>> = M
 
 fn main() -> Result<()> {
     let runtime = Runtime::new()?;
-    let resolver = runtime.block_on(async {
-        TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-    });
-    runtime.block_on(run(resolver))?;
+    runtime.block_on(run())?;
 
     Ok(())
 }
 
-async fn run(resolver: TokioAsyncResolver) -> Result<()> {
+async fn run() -> Result<()> {
     let format_stdout = tracing_subscriber::fmt::format()
         .with_line_number(true)
         .with_source_location(false);

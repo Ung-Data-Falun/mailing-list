@@ -17,11 +17,11 @@ plugins = [
 ]
 
 # Dynamically load other list
-[lists."<members@example.com>".Remote]
+[lists."members@example.com".Remote]
 location = "members.toml"
 
 # List directly in this file
-[lists."<board@example.com>".Local]
+[lists."board@example.com".Local]
 members = ["foo@example.com", "bar@example.com"]
 
 # If no defined users, send to another server

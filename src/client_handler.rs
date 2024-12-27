@@ -4,10 +4,6 @@ use smtp_proto::{Request, Response};
 use std::io::Result;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tracing::info;
-use trust_dns_resolver::{
-    name_server::{GenericConnector, TokioRuntimeProvider},
-    AsyncResolver,
-};
 
 static CAPABILITIES: &'static [u8] = br#"250-Helu!
 250-SIZE 14680064
@@ -21,7 +17,6 @@ pub async fn handle_client(
     _addr: SocketAddr,
     stream: TcpStream,
     config: &ServerConfig,
-    resolver: &AsyncResolver<GenericConnector<TokioRuntimeProvider>>,
 ) -> Result<()> {
     let mut stream = Stream::Tcp(stream);
 
@@ -30,7 +25,6 @@ pub async fn handle_client(
         .await?;
 
     info!("Greeted");
-
 
     let host = init_connection(&mut stream).await?;
     info!("Got connection from {host}.");
@@ -44,8 +38,10 @@ pub async fn handle_client(
     };
 
     if starttls {
-        stream.send_response(Response::new(220, 2, 2, 0, "Go ahead")).await?;
-        stream = stream.start_tls().await?;
+        stream
+            .send_response(Response::new(220, 2, 2, 0, "Go ahead"))
+            .await?;
+        stream = stream.start_tls_server().await?;
 
         init_connection(&mut stream).await?;
         request = stream.recieve_request().await?;
@@ -53,7 +49,7 @@ pub async fn handle_client(
 
     loop {
         let mail = recieve_mail(&mut stream, request.clone()).await?;
-        match mail.handle(config, resolver).await {
+        match mail.handle(config).await {
             Ok(_) => {
                 stream
                     .send_response(Response::new(

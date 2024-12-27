@@ -5,7 +5,7 @@ repository = "https://github.com/Ung-Data-Falun/mailing-list"
 homepage = "https://github.com/Ung-Data-Falun/mailing-list"
 license = "GPL-3.0"
 description = "SMTP server with TOML configuration and dynamic plugin system"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 
 [dependencies]
@@ -26,3 +26,4 @@ webpki-roots = "0.26.1"
 mlpa = "0.4.0"
 smtp-proto = "0.1.5"
 rustls-pki-types = "1.10.1"
+domain = { version = "0.10.3", features = ["resolv"] }

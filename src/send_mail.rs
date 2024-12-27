@@ -1,27 +1,16 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
-
 use color_eyre::eyre::Result;
-use rustls::pki_types::ServerName;
+use domain::{
+    base::{iana::Class, Name, Question, Rtype},
+    rdata::Mx,
+    resolv::StubResolver,
+};
+use smtp_proto::{MailFrom, RcptTo, Request};
 use tokio::net::TcpStream;
 use tracing::{debug, info, warn};
-use trust_dns_resolver::TokioAsyncResolver;
 
-use crate::{
-    error::Error,
-    io::{rx, tx},
-    AsyncStream,
-};
+use crate::stream::Stream;
 
-pub async fn send_group(
-    resolver: &TokioAsyncResolver,
-    host: &str,
-    msg: String,
-    members: &Vec<String>,
-    from: &str,
-) {
+pub async fn send_group(host: &str, msg: String, members: &Vec<String>, from: &str) {
     for recipient in members {
         let server = match recipient.split('@').nth(1) {
             Some(v) => v.trim_end_matches('>'),
@@ -30,11 +19,10 @@ pub async fn send_group(
 
         match send(
             host,
-            resolver,
             &msg,
             &recipient,
             &from,
-            server,
+            server.to_string(),
             None,
             server.to_string(),
         )
@@ -51,34 +39,33 @@ pub async fn send_group(
 
 pub async fn send(
     host: &str,
-    resolver: &TokioAsyncResolver,
     msg: &str,
     to: &str,
     from: &str,
-    server: &str,
+    server_override: String,
     server_port: Option<u16>,
-    local_tls_address: String,
+    server: String,
 ) -> Result<()> {
-    let stream = &mut establish_smtp_connection(
-        server.to_string(),
-        server_port,
-        resolver,
-        host,
-        local_tls_address,
-    )
-    .await?;
+    let stream = &mut establish_smtp_connection(server_override, server_port, host, server).await?;
 
-    tx(stream, format!("EHLO {host}"), false, true).await?;
-    rx(stream, false).await?;
-    tx(stream, format!("MAIL FROM:{from}"), false, true).await?;
-    rx(stream, false).await?;
-    tx(stream, format!("RCPT TO:{to}"), false, true).await?;
-    rx(stream, false).await?;
-    tx(stream, format!("DATA"), false, true).await?;
-    rx(stream, false).await?;
-    tx(stream, msg.to_string(), true, false).await?;
-    rx(stream, false).await?;
-    tx(stream, format!("QUIT"), false, true).await?;
+    let mut mail_from = MailFrom::default();
+    mail_from.address = from;
+
+    let mut rcpt_to = RcptTo::default();
+    rcpt_to.address = to;
+
+    let _response = stream.recieve_response().await?;
+    stream
+        .send_request(Request::Mail { from: mail_from })
+        .await?;
+    let _response = stream.recieve_response().await?;
+    stream.send_request(Request::Rcpt { to: rcpt_to }).await?;
+    let _response = stream.recieve_response().await?;
+    stream.send_request::<String>(Request::Data).await?;
+    let _response = stream.recieve_response().await?;
+    stream.send_mail(msg.as_bytes()).await?;
+    let _response = stream.recieve_response().await?;
+    stream.send_request::<String>(Request::Quit).await?;
 
     info!("Sent mail to {to}");
     Ok(())
@@ -87,58 +74,58 @@ pub async fn send(
 async fn establish_smtp_connection(
     server: String,
     server_port: Option<u16>,
-    resolver: &TokioAsyncResolver,
     host: &str,
-    local_tls_address: String,
-) -> Result<Box<dyn AsyncStream>> {
+    tls: String,
+) -> Result<Stream> {
     let server_port = server_port.unwrap_or(25);
-    let ip: IpAddr;
-    let dns_name: ServerName<'_>;
+
+    let address = get_address(&server).await?;
+    let stream = TcpStream::connect(format!("{address}:{server_port}")).await?;
+    let mut stream = Stream::Tcp(stream);
+
+    let _response = stream.recieve_response().await?;
+    stream.send_request(Request::Ehlo { host }).await?;
+
+    let capabilities = stream.recieve_capabilities().await?;
+
+    let supports_tls = capabilities.contains(&"STARTTLS".to_string());
+
+    if supports_tls {
+        stream.send_request::<String>(Request::StartTls).await?;
+        let _response = stream.recieve_response().await?;
+
+        let mut stream = stream.start_tls_client(tls).await?;
+
+        stream.send_request(Request::Ehlo { host }).await?;
+        return Ok(stream);
+    } else {
+        return Ok(stream);
+    }
+}
+
+async fn get_address(server: &str) -> Result<String> {
+    let ip: String;
     if server.starts_with('[') && server.ends_with(']') {
         let server = server
             .trim_start_matches('[')
             .trim_end_matches(']')
             .to_string();
-        dns_name = local_tls_address.try_into()?;
-        ip = server.parse::<IpAddr>()?;
+        ip = server;
     } else {
-        let lookup = resolver.mx_lookup(server.clone()).await?;
-        let record = match lookup.iter().next() {
-            Some(v) => v,
-            None => return Err(Error::InvalidMail.into()),
-        };
-        let record = record.exchange().to_utf8();
-        dns_name = record.clone().try_into()?;
-        let record = match resolver.lookup_ip(record).await?.iter().next() {
-            Some(v) => v,
-            None => return Err(Error::InvalidMail.into()),
-        };
-        ip = record.into();
+        ip = lookup_mx(server).await?;
     }
 
-    let address = SocketAddr::new(ip, server_port);
-    let mut stream = TcpStream::connect(address).await?;
+    Ok(ip)
+}
 
-    rx(&mut stream, false).await?;
-    tx(&mut stream, format!("EHLO {host}"), false, true).await?;
-    let supports_tls = rx(&mut stream, false)
-        .await?
-        .split("\r\n")
-        .collect::<Vec<&str>>()
-        .contains(&"250-STARTTLS");
-    if supports_tls {
-        tx(&mut stream, "STARTTLS".to_string(), false, true).await?;
-        rx(&mut stream, false).await?;
-        let root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-        let rc_config = Arc::new(config);
+async fn lookup_mx(server: &str) -> Result<String> {
+    let resolver = StubResolver::new();
+    let name = Name::bytes_from_str(server)?;
+    let question = Question::new(name, Rtype::MX, Class::IN);
+    let answer = resolver.query(question).await?;
+    let answer = answer.answer()?.next().unwrap()?;
+    let answer = answer.to_record::<Mx<_>>()?.unwrap();
+    let answer = answer.data().exchange().to_string();
 
-        let connector = tokio_rustls::TlsConnector::from(rc_config);
-        return Ok(Box::new(connector.connect(dns_name.clone(), stream).await?));
-    } else {
-        return Ok(Box::new(stream));
-    }
+    Ok(answer)
 }

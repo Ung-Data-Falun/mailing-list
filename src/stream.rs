@@ -4,13 +4,13 @@ use std::{
 };
 
 use color_eyre::eyre::eyre;
-use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName};
 use smtp_proto::{response::parser::ResponseReceiver, Request, Response};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
-use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tokio_rustls::{TlsAcceptor, TlsStream};
 use tracing::debug;
 
 use crate::AsyncStream;
@@ -47,7 +47,7 @@ impl Stream {
         Ok(())
     }
 
-    pub async fn get_response(&mut self) -> color_eyre::eyre::Result<Response<String>> {
+    pub async fn recieve_response(&mut self) -> color_eyre::eyre::Result<Response<String>> {
         let stream = *self.deref();
 
         let mut bufreader = BufReader::new(stream);
@@ -61,26 +61,6 @@ impl Stream {
         let response = reciever.parse(&mut buffer.iter())?;
 
         Ok(response)
-    }
-
-    pub async fn protocol_error(&mut self) -> Result<()> {
-        self.send_response(Response::new(500, 5, 5, 0, "Syntax Error"))
-            .await
-    }
-
-    pub async fn recieve_mail(&mut self) -> Result<Vec<u8>> {
-        let stream = *self.deref();
-        let mut buf: Vec<u8> = Vec::new();
-
-        loop {
-            buf.push(stream.read_u8().await?);
-
-            if buf.ends_with(b"\r\n.\r\n") {
-                break;
-            }
-        }
-
-        Ok(buf)
     }
 
     pub async fn recieve_request(&mut self) -> Result<Request<String>> {
@@ -133,6 +113,29 @@ impl Stream {
         Ok(())
     }
 
+    pub async fn recieve_mail(&mut self) -> Result<Vec<u8>> {
+        let stream = *self.deref();
+        let mut buf: Vec<u8> = Vec::new();
+
+        loop {
+            buf.push(stream.read_u8().await?);
+
+            if buf.ends_with(b"\r\n.\r\n") {
+                break;
+            }
+        }
+
+        Ok(buf)
+    }
+
+    pub async fn send_mail(&mut self, mail: &[u8]) -> Result<()> {
+        let stream = *self.deref();
+
+        stream.write_all(mail).await?;
+
+        Ok(())
+    }
+
     pub async fn quit(&mut self) -> Error {
         let _ = self
             .send_response(Response::new(221, 2, 0, 0, "Byebye!"))
@@ -141,7 +144,12 @@ impl Stream {
         Error::new(ErrorKind::ConnectionReset, "Client Quit")
     }
 
-    pub async fn start_tls(self) -> Result<Self> {
+    pub async fn protocol_error(&mut self) -> Result<()> {
+        self.send_response(Response::new(500, 5, 5, 0, "Syntax Error"))
+            .await
+    }
+
+    pub async fn start_tls_server(self) -> Result<Self> {
         let stream = match self {
             Self::Tcp(a) => a,
             Self::Tls(_) => {
@@ -166,7 +174,73 @@ impl Stream {
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
         let stream = acceptor.accept(stream).await?;
+        let stream = TlsStream::Server(stream);
 
         return Ok(Self::Tls(stream));
+    }
+
+    pub async fn start_tls_client(self, server_name: String) -> Result<Self> {
+        let stream = match self {
+            Self::Tcp(a) => a,
+            Self::Tls(_) => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "tfw någon försöker starttls två gånger",
+                )
+                .into())
+            }
+        };
+
+        let root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let rc_config = Arc::new(config);
+
+        let connector = tokio_rustls::TlsConnector::from(rc_config);
+        let dns_name = match ServerName::try_from(server_name) {
+            Ok(v) => v,
+            Err(e) => return Err(Error::new(ErrorKind::InvalidData, format!("{e}"))),
+        };
+
+        let stream = connector.connect(dns_name, stream).await?;
+        let stream = TlsStream::Client(stream);
+
+        Ok(Self::Tls(stream))
+    }
+
+    pub async fn recieve_capabilities(&mut self) -> color_eyre::eyre::Result<Vec<String>> {
+        let stream = *self.deref();
+
+        let mut buf = Vec::new();
+        let _num_recieved_bytes = stream.read_buf(&mut buf);
+
+        let buf = String::from_utf8_lossy(&buf);
+
+        let capabilties = Self::parse_capabilties(buf.to_string())?;
+
+        Ok(capabilties)
+    }
+
+    fn parse_capabilties(capabilties: String) -> color_eyre::eyre::Result<Vec<String>> {
+        let mut lines = capabilties.split("\r\n");
+        lines.next(); // remove first line
+
+        let mut capabilties = Vec::new();
+
+        for line in lines {
+            let capability: String;
+            let separator = if line.contains('-') { '-' } else { ' ' };
+
+            capability = match line.split(separator).next_back() {
+                Some(v) => v.to_string(),
+                None => return Err(eyre!(":3")),
+            };
+
+            capabilties.push(capability)
+        }
+
+        Ok(capabilties)
     }
 }

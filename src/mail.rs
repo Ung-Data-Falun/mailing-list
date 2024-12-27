@@ -1,8 +1,4 @@
 use tracing::info;
-use trust_dns_resolver::{
-    name_server::{GenericConnector, TokioRuntimeProvider},
-    AsyncResolver,
-};
 
 use crate::{
     config::ServerConfig,
@@ -17,18 +13,13 @@ pub struct Mail {
 }
 
 pub enum Error {
-    IoError(std::io::Error),
     SendError,
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
 impl Mail {
-    pub async fn handle(
-        mut self,
-        config: &ServerConfig,
-        resolver: &AsyncResolver<GenericConnector<TokioRuntimeProvider>>,
-    ) -> Result<()> {
+    pub async fn handle(mut self, config: &ServerConfig) -> Result<()> {
         let lists = &config.lists;
         let forwarding_enabled = config.forwarding.clone().is_some_and(|x| x.enable);
 
@@ -38,7 +29,6 @@ impl Mail {
             if lists.contains_key(&recipient) {
                 info!("Sending to everyone subscribing to {recipient}");
                 send_group(
-                    resolver,
                     &config.hostname,
                     self.data.clone(),
                     &config
@@ -67,11 +57,10 @@ impl Mail {
 
             match send_mail::send(
                 &config.hostname,
-                resolver,
                 &self.data,
                 &recipient,
                 &self.sender,
-                &server,
+                server,
                 forwarding.port,
                 forwarding.server_tls,
             )
