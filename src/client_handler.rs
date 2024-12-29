@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use smtp_proto::{Request, Response};
 use std::io::Result;
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::{io::AsyncWriteExt, net::TcpStream, time::sleep};
 use tracing::info;
 
 static CAPABILITIES: &'static [u8] = br#"250-Helu!
@@ -48,6 +48,7 @@ pub async fn handle_client(
     }
 
     loop {
+        sleep(Duration::from_millis(10)).await;
         let mail = recieve_mail(&mut stream, request.clone()).await?;
         match mail.handle(config).await {
             Ok(_) => {
@@ -88,6 +89,7 @@ async fn recieve_mail(stream: &mut Stream, to: Request<String>) -> Result<Mail> 
 async fn get_recipients(stream: &mut Stream) -> Result<Vec<String>> {
     let mut recipients: Vec<String> = Vec::new();
     loop {
+        sleep(Duration::from_millis(10)).await;
         info!("Getting reciever");
 
         let request = stream.recieve_request().await?;
@@ -123,6 +125,7 @@ async fn get_recipients(stream: &mut Stream) -> Result<Vec<String>> {
 async fn get_sender(stream: &mut Stream, mut request: Request<String>) -> Result<String> {
     let mut is_first = true;
     loop {
+        sleep(Duration::from_millis(10)).await;
         info!("Getting Sender");
         if !is_first {
             request = stream.recieve_request().await?;
@@ -155,6 +158,7 @@ async fn get_sender(stream: &mut Stream, mut request: Request<String>) -> Result
 
 async fn init_connection(stream: &mut Stream) -> Result<String> {
     loop {
+        sleep(Duration::from_millis(10)).await;
         let request = stream.recieve_request().await?;
 
         let (host, esmtp) = match request {
